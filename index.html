@@ -290,10 +290,6 @@
     <div class="status" id="recStatus"></div>
     <textarea id="recExport" readonly placeholder="保存すると、ここに「ぶー」の秒数が出ます。これをコピーして作者に渡すと、ゲームの正解として焼き込めます。" style="width:100%;height:60px;border-radius:8px;background:#0d0d12;color:#9fe88a;border:1px solid #333;font-size:13px;padding:8px;font-family:monospace;"></textarea>
     <div class="row"><button class="save" id="recCopy">ぶーの秒数をコピー</button><span class="muted">← これを作者に貼ってください（全員の正解になります）</span></div>
-    <hr style="border:none;border-top:1px solid #444;margin:6px 0">
-    <h2>動作チェック（開発用）</h2>
-    <div class="row"><button class="ghost" id="perfToggle">計測オーバーレイ ON/OFF</button>
-      <span class="muted">画面左上に FPS・押下処理の重さ・カクつきを表示。ゲームに戻ってプレイ中に確認してください。</span></div>
     <p class="muted">ヒント：録音した譜面はこの端末に保存されます。<br>
       元の歌：<a class="yt" href="https://youtu.be/ogjGZH1zK4U" target="_blank" rel="noopener">YouTube</a> ／ <a class="yt" href="https://boobooproject.jp/" target="_blank" rel="noopener">#たすけてブーブー</a></p>
   </div>
@@ -833,7 +829,8 @@ document.querySelectorAll('[data-horn]').forEach(b=>b.addEventListener('click',(
 document.querySelectorAll('[data-fart]').forEach(b=>b.addEventListener('click',()=>{ fartSel=b.dataset.fart; try{localStorage.setItem('booboo_fart',fartSel);}catch(e){} refreshPicks(); previewSound('fart'); }));
 refreshPicks();
 PERF.init();
-$('#perfToggle').addEventListener('click',()=>PERF.toggle());
+// dev計測オーバーレイは一般公開では非表示。PCで「P」キーを押すとこっそりON/OFF（録音中は無効）。
+window.addEventListener('keydown',e=>{ if(e.code==='KeyP' && !recording){ PERF.toggle(); } });
 // While recording, a tap ANYWHERE on the recorder screen (except the buttons) counts —
 // so it works on tablets/phones with no keyboard, even though the recorder is on top.
 function recTap(){ if(!recording) return; recTimes.push(audioEl?audioEl.currentTime:0); $('#recCount').textContent='ぶー ×'+recTimes.length; }
