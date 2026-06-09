@@ -397,7 +397,29 @@ function speak(t,opt){
 function makeCurve(amount){ const n=256,c=new Float32Array(n); for(let i=0;i<n;i++){ const x=i/n*2-1; c[i]=(1+amount)*x/(1+amount*Math.abs(x)); } return c; }
 // linear up to ~0.8, soft knee above → catches peaks gently (transparent for normal levels)
 function makeSoftCurve(){ const n=1024,c=new Float32Array(n); for(let i=0;i<n;i++){ const x=i/(n-1)*2-1, a=Math.abs(x), s=x<0?-1:1; c[i]= a<0.8 ? x : s*(0.8+0.2*Math.tanh((a-0.8)/0.2)); } return c; }
+// iOS: the hardware silent switch mutes Web Audio (the SFX). Keeping a tiny SILENT loop
+// playing on an <audio> element holds a "playback" audio session open, so Web Audio rides
+// along and is heard even in silent mode. Generated WAV (zeroed PCM) → no external asset.
+let _silentEl=null;
+function makeSilentWavUrl(){
+  const sr=8000, sec=0.5, n=(sr*sec)|0, bytes=44+n*2, buf=new ArrayBuffer(bytes), v=new DataView(buf);
+  const ws=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  ws(0,'RIFF'); v.setUint32(4,bytes-8,true); ws(8,'WAVE'); ws(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws(36,'data'); v.setUint32(40,n*2,true);   // PCM samples already zero = silent
+  return URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
+}
+function enableSilentModeAudio(){   // must be called from a user gesture
+  if(_silentEl){ try{ _silentEl.play(); }catch(e){} return; }
+  try{
+    _silentEl=new Audio(makeSilentWavUrl());
+    _silentEl.loop=true; _silentEl.volume=0.02; _silentEl.setAttribute('playsinline','');
+    _silentEl.play().catch(()=>{});
+  }catch(e){ _silentEl=null; }
+}
 function initAudio(){
+  enableSilentModeAudio();   // ride the silent switch (iOS) — harmless elsewhere
   if(ac) return;
   ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
   master=ac.createGain(); master.gain.value=soundOn?1.0:0.0; master.connect(ac.destination);   // 直結（余計なノードなし＝軽い）
