@@ -280,13 +280,6 @@
       <button class="pickbtn" data-fart="fart2">2</button>
       <button class="pickbtn" data-fart="fart3">3</button>
       <span class="muted" id="fartNow"></span></div>
-    <div class="row"><span style="min-width:88px;font-weight:800">おんがくの音量</span>
-      <button class="pickbtn" data-vol="0.42">いま</button>
-      <button class="pickbtn" data-vol="0.34">A 少し小</button>
-      <button class="pickbtn" data-vol="0.28">B ほどよく</button>
-      <button class="pickbtn" data-vol="0.21">C しっかり小</button>
-      <span class="muted" id="volNow"></span></div>
-    <p class="muted" style="margin:.2em 0 0">↑ 押すと その音量で曲が数秒ながれます。聴き比べて、よければ番号を教えてください（既定にします）。</p>
     <hr style="border:none;border-top:1px solid #444;margin:6px 0">
     <h2>おんがくを いれる（おうちのひと向け）</h2>
     <p>① ブーブー（クラクションの歌）の音声ファイルを選びます。<br>
@@ -353,8 +346,7 @@ const PERFECT=0.20, GOOD=0.34, WINDOW=0.45;
 const PT_PERFECT=100, PT_GOOD=70, PT_MISS=-12;
 const PASS_RATIO=0.45;          // たすけメーターのゴール（やさしめ）
 const TEMP_MIN=30, TEMP_MAX=50;
-let SONG_VOL=0.42;             // BGM base volume (low so SFX cut through without ducking)
-try{ const v=parseFloat(localStorage.getItem('booboo_songvol')); if(v>0&&v<=1) SONG_VOL=v; }catch(e){}
+const SONG_VOL=0.28;           // BGM base volume = 「B ほどよく」（出力 ≈ -9 dBFS peak）
 const DUCK_VOL=0.12;            // BGM dips this low the instant you honk
 
 // 検証用：候補サウンド（ビルド時に data URI を埋め込み）
@@ -425,6 +417,7 @@ function initAudio(){
   if(ac) return;
   ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
   master=ac.createGain(); master.gain.value=soundOn?1.0:0.0; master.connect(ac.destination);   // 直結（余計なノードなし＝軽い）
+  voiceBus=ac.createGain(); voiceBus.gain.value=1.0; voiceBus.connect(master);   // 固定モノラルバス（押下ごとのノード生成をなくす）
   // dedicated, gritty, loud bus for the horn so it cuts through the song
   shaper=ac.createWaveShaper(); shaper.curve=makeCurve(6); shaper.oversample='2x';
   honkBus=ac.createGain(); honkBus.gain.value=1.0; honkBus.connect(shaper); shaper.connect(master);
@@ -439,15 +432,16 @@ function initAudio(){
   })(k); }
 }
 function onsetOf(buf){ const d=buf.getChannelData(0); let pk=0; for(let i=0;i<d.length;i++){const a=Math.abs(d[i]); if(a>pk)pk=a;} const th=0.22*pk; for(let i=0;i<d.length;i++){ if(Math.abs(d[i])>th) return i/buf.sampleRate; } return 0; }
-function playSampleBuf(key,dur,vol,dst,punchy){
-  const buf=SBUF[key]; if(!buf){ const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime; o.type='square'; o.frequency.value=430; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.5,t+0.008); g.gain.exponentialRampToValueAtTime(0.001,t+0.15); o.connect(g); g.connect(dst); o.start(t); o.stop(t+0.17); return; }
+function playSampleBuf(key,dur,vol,punchy){
+  const buf=SBUF[key]; if(!buf){ const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime; o.type='square'; o.frequency.value=430; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.5,t+0.008); g.gain.exponentialRampToValueAtTime(0.001,t+0.15); o.connect(g); g.connect(voiceBus); o.start(t); o.stop(t+0.17); curVSrc=o; curVG=g; return; }
   const s=ac.createBufferSource(); s.buffer=buf; const g=ac.createGain(); const t=ac.currentTime;
   if(punchy){ // quick percussive decay so a sustained horn becomes a short "ブッ" (no droning tail)
     g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
   } else {
     g.gain.setValueAtTime(vol,t); g.gain.setValueAtTime(vol,t+Math.max(0.01,dur-0.03)); g.gain.linearRampToValueAtTime(0.0001,t+dur);
   }
-  s.connect(g); g.connect(dst); s.start(t, SON[key]||0, dur+0.02); s.onended=()=>{try{s.disconnect();g.disconnect();}catch(e){}};
+  s.connect(g); g.connect(voiceBus); s.start(t, SON[key]||0, dur+0.02); s.onended=()=>{try{s.disconnect();g.disconnect();}catch(e){}};
+  curVSrc=s; curVG=g;
 }
 function tone(t,freq,dur,type,vol,glide){
   const o=ac.createOscillator(), g=ac.createGain();
@@ -477,33 +471,35 @@ function honkTones(t,freqs,dur,type,vol){
   });
 }
 function duckSong(){ if(audioEl){ try{ audioEl.volume=DUCK_VOL; }catch(e){} clearTimeout(duckT); duckT=setTimeout(()=>{ if(audioEl){ try{audioEl.volume=SONG_VOL;}catch(e){} } },220); } }
-// mono voice: each press instantly silences the previous honk → sounds never overlap/stack
-let curVoice=null;
-function voiceGain(t){
-  if(curVoice){ try{ const old=curVoice; old.gain.cancelScheduledValues(t); old.gain.setValueAtTime(old.gain.value,t); old.gain.linearRampToValueAtTime(0.0001,t+0.012);
-    setTimeout(()=>{ try{ old.disconnect(); }catch(e){} }, 80); }catch(e){} }   // free the old node → less GC churn
-  const g=ac.createGain(); g.gain.value=1; g.connect(master); curVoice=g; return g;
+// mono voice: a single persistent bus. On each press the previous one-shot is faded out &
+// stopped — so NO new gain node + setTimeout per tap (much lighter on the press path).
+let voiceBus=null, curVSrc=null, curVG=null;
+function cutVoice(t){
+  if(curVG){ try{ curVG.gain.cancelScheduledValues(t); curVG.gain.setValueAtTime(curVG.gain.value,t); curVG.gain.linearRampToValueAtTime(0.0001,t+0.012); }catch(e){} }
+  if(curVSrc){ try{ curVSrc.stop(t+0.03); }catch(e){} }
+  curVSrc=null; curVG=null;
 }
 function honk(){
   if(!ac){ initAudio(); }
   if(ac.state==='suspended'){ try{ ac.resume(); }catch(e){} }
   const t=ac.currentTime;
   // no per-press song ducking — changing HTMLAudio volume every tap can hitch the song (breaks rhythm)
-  const dst=voiceGain(t);   // mono → no overlap
-  if(item==='bottle') drumHit(t,dst);
-  else if(item==='butt') playSampleBuf(fartSel,0.34,1.5,dst);    // おなら（+15%、ソフトクリップで保護）
-  else playSampleBuf(hornSel,0.16,1.6,dst,true);              // クラクション：短く“ブッ”（+15%）
+  cutVoice(t);   // mono → silence the previous tap (cheap: no node/timeout churn)
+  if(item==='bottle') drumHit(t);
+  else if(item==='butt') playSampleBuf(fartSel,0.34,1.5,false);   // おなら
+  else playSampleBuf(hornSel,0.16,1.6,true);                   // クラクション：短く“ブッ”
 }
 // 水筒：太鼓みたいな打音（ドン）
-function drumHit(t,dst){
+function drumHit(t){
   const o=ac.createOscillator(), g=ac.createGain();
   o.type='sine'; o.frequency.setValueAtTime(200,t); o.frequency.exponentialRampToValueAtTime(58,t+0.16);
   g.gain.setValueAtTime(1.1,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.28);   // 太鼓（+15%）
-  o.connect(g); g.connect(dst); o.start(t); o.stop(t+0.30); o.onended=()=>{try{o.disconnect();g.disconnect();}catch(e){}};
+  o.connect(g); g.connect(voiceBus); o.start(t); o.stop(t+0.30); o.onended=()=>{try{o.disconnect();g.disconnect();}catch(e){}};
   const n=ac.createBufferSource(); n.buffer=noiseBuf;
   const nf=ac.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=1900; nf.Q.value=0.7;
   const ng=ac.createGain(); ng.gain.setValueAtTime(0.58,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.045);
-  n.connect(nf); nf.connect(ng); ng.connect(dst); n.start(t); n.stop(t+0.06); n.onended=()=>{try{n.disconnect();nf.disconnect();ng.disconnect();}catch(e){}};
+  n.connect(nf); nf.connect(ng); ng.connect(voiceBus); n.start(t); n.stop(t+0.06); n.onended=()=>{try{n.disconnect();nf.disconnect();ng.disconnect();}catch(e){}};
+  curVSrc=o; curVG=g;
 }
 // おしり：軽い「ぷっ」（とても短い）
 function fartSound(t,dst){
@@ -577,19 +573,21 @@ function setTemp(v){
   const op=+(p*0.85).toFixed(2);
   if(op!==lastHeatOp){ $('#heat').style.opacity=op; lastHeatOp=op; }   // only write when it actually changes (red heat overlay)
 }
+let _judgeEl=null, _judgeA=null;
 function showJudge(text){
-  const j=$('#judge'); j.textContent=text;
-  j.getAnimations().forEach(a=>a.cancel());
-  j.animate([
+  const j=_judgeEl||(_judgeEl=$('#judge')); j.textContent=text;
+  if(_judgeA) _judgeA.cancel();   // cancel only our own anim (no getAnimations() scan per tap)
+  _judgeA=j.animate([
     {opacity:1, transform:'translate(-50%,-50%) scale(.7)'},
     {opacity:1, transform:'translate(-50%,-50%) scale(1.05)', offset:.3},
     {opacity:0, transform:'translate(-50%,-62%) scale(1)'}
   ], {duration:550, easing:'ease'});
 }
-let lastStars=-1, lastW=-1, passedLine=false;
+let lastStars=-1, lastW=-1, passedLine=false, _meterFill=null;
 function updateMeter(){
+  const mf=_meterFill||(_meterFill=$('#meterFill'));
   const ms=maxScore(); const w=Math.min(100,(Math.max(0,score)/ms)*100);
-  if(w!==lastW){ $('#meterFill').style.width=w+'%'; lastW=w; }
+  if(w!==lastW){ mf.style.width=w+'%'; lastW=w; }
   const cap=activeNotes().length||27;
   const sc=Math.min(9, Math.round(hits/cap*9));   // up to 9 ラッパ, grows with progress
   if(sc!==lastStars){
@@ -600,7 +598,7 @@ function updateMeter(){
   // fill が実際に旗位置（45%）へ伸びきった瞬間＝transitionend に同期して発火させる（手前で出るのを防ぐ）
   if(!passedLine && score>=passScore()){
     passedLine=true;
-    const mf=$('#meterFill'); let fired=false;
+    let fired=false;
     const go=()=>{ if(fired) return; fired=true; triggerRainbow(); };
     mf.addEventListener('transitionend',go,{once:true});   // バーが旗(45%)へ伸びきった瞬間に同期
     setTimeout(go,180);                                     // 念のためのフォールバック（transition .15s + 余白）
@@ -786,9 +784,11 @@ function press(){
   }
   PERF.pressEnd(_pt);   // dev: main-thread cost of this press
 }
+let _flashEl=null, _flashA=null;
 function flashHorn(){
-  const e=$('#hornFlash'); e.getAnimations().forEach(a=>a.cancel());
-  e.animate([{opacity:.6},{opacity:0}], {duration:260, easing:'ease'});
+  const e=_flashEl||(_flashEl=$('#hornFlash'));
+  if(_flashA) _flashA.cancel();   // cancel only our own anim (no getAnimations() scan per tap)
+  _flashA=e.animate([{opacity:.6},{opacity:0}], {duration:260, easing:'ease'});
 }
 let winSrc=null;
 function playWinMusic(){
@@ -856,7 +856,7 @@ function longHonk(){
   const t=ac.currentTime;
   [300,378].forEach((f,i)=>{ const o=ac.createOscillator(), g=ac.createGain();
     o.type='sawtooth'; o.frequency.setValueAtTime(f*1.04,t); o.frequency.exponentialRampToValueAtTime(f,t+0.06);
-    const v=i?0.018:0.027; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.03);
+    const v=i?0.009:0.0135; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.03);   // 最初のぶーーっ＝半分の音量
     g.gain.setValueAtTime(v,t+1.05); g.gain.exponentialRampToValueAtTime(0.0001,t+1.35);
     o.connect(g); g.connect(honkBus); o.start(t); o.stop(t+1.4); });
 }
@@ -903,22 +903,11 @@ function refreshPicks(){
   document.querySelectorAll('[data-fart]').forEach(b=>b.classList.toggle('sel', b.dataset.fart===fartSel));
   $('#hornNow').textContent='いま：'+hornSel.replace('horn','クラクション ');
   $('#fartNow').textContent='いま：'+fartSel.replace('fart','おなら ');
-  document.querySelectorAll('[data-vol]').forEach(b=>b.classList.toggle('sel', Math.abs(parseFloat(b.dataset.vol)-SONG_VOL)<0.001));
-  const vn=$('#volNow'); if(vn) vn.textContent='いま：'+SONG_VOL.toFixed(2);
 }
-function previewSound(kind){ initAudio(); if(ac.resume)ac.resume(); const t=ac.currentTime; const dst=voiceGain(t);
-  if(kind==='horn') playSampleBuf(hornSel,0.16,1.6,dst,true); else playSampleBuf(fartSel,0.34,1.5,dst); }
-// 音楽音量のおためし：押すと その音量で曲を数秒ながす（タップ＝gesture なので iOS でも鳴る）
-let songPrevT=0;
-function previewSong(){
-  if(!audioEl){ return; } songUnlocked=true;
-  try{ audioEl.muted=!soundOn; audioEl.volume=SONG_VOL; audioEl.currentTime=3.6; audioEl.play().catch(()=>{});
-    clearTimeout(songPrevT); songPrevT=setTimeout(()=>{ try{ if(!playing) audioEl.pause(); }catch(e){} }, 5000);
-  }catch(e){}
-}
+function previewSound(kind){ initAudio(); if(ac.resume)ac.resume(); const t=ac.currentTime; cutVoice(t);
+  if(kind==='horn') playSampleBuf(hornSel,0.16,1.6,true); else playSampleBuf(fartSel,0.34,1.5,false); }
 document.querySelectorAll('[data-horn]').forEach(b=>b.addEventListener('click',()=>{ hornSel=b.dataset.horn; try{localStorage.setItem('booboo_horn',hornSel);}catch(e){} refreshPicks(); previewSound('horn'); }));
 document.querySelectorAll('[data-fart]').forEach(b=>b.addEventListener('click',()=>{ fartSel=b.dataset.fart; try{localStorage.setItem('booboo_fart',fartSel);}catch(e){} refreshPicks(); previewSound('fart'); }));
-document.querySelectorAll('[data-vol]').forEach(b=>b.addEventListener('click',()=>{ const v=parseFloat(b.dataset.vol); if(v>0&&v<=1){ SONG_VOL=v; try{localStorage.setItem('booboo_songvol',String(v));}catch(e){} } refreshPicks(); previewSong(); }));
 refreshPicks();
 $('#soundBtn').addEventListener('click',e=>{ e.stopPropagation(); toggleSound(); });
 applySound();   // reflect saved on/off state on the icon at startup
