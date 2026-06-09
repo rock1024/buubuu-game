@@ -280,6 +280,13 @@
       <button class="pickbtn" data-fart="fart2">2</button>
       <button class="pickbtn" data-fart="fart3">3</button>
       <span class="muted" id="fartNow"></span></div>
+    <div class="row"><span style="min-width:88px;font-weight:800">おんがくの音量</span>
+      <button class="pickbtn" data-vol="0.42">いま</button>
+      <button class="pickbtn" data-vol="0.34">A 少し小</button>
+      <button class="pickbtn" data-vol="0.28">B ほどよく</button>
+      <button class="pickbtn" data-vol="0.21">C しっかり小</button>
+      <span class="muted" id="volNow"></span></div>
+    <p class="muted" style="margin:.2em 0 0">↑ 押すと その音量で曲が数秒ながれます。聴き比べて、よければ番号を教えてください（既定にします）。</p>
     <hr style="border:none;border-top:1px solid #444;margin:6px 0">
     <h2>おんがくを いれる（おうちのひと向け）</h2>
     <p>① ブーブー（クラクションの歌）の音声ファイルを選びます。<br>
@@ -346,7 +353,8 @@ const PERFECT=0.20, GOOD=0.34, WINDOW=0.45;
 const PT_PERFECT=100, PT_GOOD=70, PT_MISS=-12;
 const PASS_RATIO=0.45;          // たすけメーターのゴール（やさしめ）
 const TEMP_MIN=30, TEMP_MAX=50;
-const SONG_VOL=0.42;            // BGM base volume (low so SFX cut through without ducking)
+let SONG_VOL=0.42;             // BGM base volume (low so SFX cut through without ducking)
+try{ const v=parseFloat(localStorage.getItem('booboo_songvol')); if(v>0&&v<=1) SONG_VOL=v; }catch(e){}
 const DUCK_VOL=0.12;            // BGM dips this low the instant you honk
 
 // 検証用：候補サウンド（ビルド時に data URI を埋め込み）
@@ -895,11 +903,22 @@ function refreshPicks(){
   document.querySelectorAll('[data-fart]').forEach(b=>b.classList.toggle('sel', b.dataset.fart===fartSel));
   $('#hornNow').textContent='いま：'+hornSel.replace('horn','クラクション ');
   $('#fartNow').textContent='いま：'+fartSel.replace('fart','おなら ');
+  document.querySelectorAll('[data-vol]').forEach(b=>b.classList.toggle('sel', Math.abs(parseFloat(b.dataset.vol)-SONG_VOL)<0.001));
+  const vn=$('#volNow'); if(vn) vn.textContent='いま：'+SONG_VOL.toFixed(2);
 }
 function previewSound(kind){ initAudio(); if(ac.resume)ac.resume(); const t=ac.currentTime; const dst=voiceGain(t);
   if(kind==='horn') playSampleBuf(hornSel,0.16,1.6,dst,true); else playSampleBuf(fartSel,0.34,1.5,dst); }
+// 音楽音量のおためし：押すと その音量で曲を数秒ながす（タップ＝gesture なので iOS でも鳴る）
+let songPrevT=0;
+function previewSong(){
+  if(!audioEl){ return; } songUnlocked=true;
+  try{ audioEl.muted=!soundOn; audioEl.volume=SONG_VOL; audioEl.currentTime=3.6; audioEl.play().catch(()=>{});
+    clearTimeout(songPrevT); songPrevT=setTimeout(()=>{ try{ if(!playing) audioEl.pause(); }catch(e){} }, 5000);
+  }catch(e){}
+}
 document.querySelectorAll('[data-horn]').forEach(b=>b.addEventListener('click',()=>{ hornSel=b.dataset.horn; try{localStorage.setItem('booboo_horn',hornSel);}catch(e){} refreshPicks(); previewSound('horn'); }));
 document.querySelectorAll('[data-fart]').forEach(b=>b.addEventListener('click',()=>{ fartSel=b.dataset.fart; try{localStorage.setItem('booboo_fart',fartSel);}catch(e){} refreshPicks(); previewSound('fart'); }));
+document.querySelectorAll('[data-vol]').forEach(b=>b.addEventListener('click',()=>{ const v=parseFloat(b.dataset.vol); if(v>0&&v<=1){ SONG_VOL=v; try{localStorage.setItem('booboo_songvol',String(v));}catch(e){} } refreshPicks(); previewSong(); }));
 refreshPicks();
 $('#soundBtn').addEventListener('click',e=>{ e.stopPropagation(); toggleSound(); });
 applySound();   // reflect saved on/off state on the icon at startup
