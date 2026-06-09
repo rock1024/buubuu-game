@@ -357,16 +357,9 @@ let lastSpoken='';
 let jaVoice=null;
 function pickVoice(){ try{ const vs=speechSynthesis.getVoices(); jaVoice=vs.find(v=>(v.lang||'').toLowerCase().startsWith('ja'))||null; }catch(e){} }
 if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged=pickVoice; pickVoice(); }
+// 音声ガイド（TTS読み上げ）は廃止。呼び出しは残っているが何もしない（誤って喋らないよう cancel だけ実施）。
 function speak(t,opt){
-  lastSpoken=t;
-  if(!('speechSynthesis' in window)) return;
-  try{
-    speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(t);
-    if(jaVoice) u.voice=jaVoice;
-    u.lang='ja-JP'; u.rate=(opt&&opt.rate)||0.95; u.pitch=(opt&&opt.pitch)||1.2; u.volume=1;
-    speechSynthesis.speak(u);
-  }catch(e){}
+  try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
 }
 
 /* ===== Audio (synth fallback + sfx) ===== */
@@ -576,7 +569,6 @@ function lyricAt(now){
 }
 function startCountdown(){
   initAudio(); if(ac.resume) ac.resume();
-  $('#speaker').style.display='flex';
   const cd=$('#countdown'); cd.classList.remove('hidden');
   speak('ぶーの おとで、ぶたさんを ぽん！だよ。よーい…');
   const seq=['3','2','1','GO!']; let i=0;
